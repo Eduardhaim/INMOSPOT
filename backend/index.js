@@ -1,6 +1,7 @@
 const express = require('express')
 const sequelize = require('./db/connection')
 const Usuario = require('./Modelos/Usuario')
+const Cliente = require('./Modelos/Cliente')
 const bcrypt = require('bcryptjs')
 const { randomBytes } = require('node:crypto')
 
@@ -241,6 +242,151 @@ app.post('/logout', validarSesion, async (req, resp) => {
     } catch (error) {
         resp.status(500).json({
             mensaje: 'Error al cerrar sesion'
+        })
+    }
+})
+
+// Registrar cliente
+app.post('/cliente', validarSesion, validarRol('agente'), async (req, resp) => {
+    try {
+        const { nombre, apellido, telefono, correo, direccion, tipo } = req.body
+
+        if (!nombre || !apellido || !telefono || !correo || !tipo) {
+            return resp.status(400).json({
+                mensaje: 'Complete los campos obligatorios'
+            })
+        }
+
+        const tipos = [
+            'comprador',
+            'vendedor',
+            'arrendatario',
+            'propietario'
+        ]
+
+        if (!tipos.includes(tipo)) {
+            return resp.status(400).json({
+                mensaje: 'Tipo de cliente no valido'
+            })
+        }
+
+        const cliente = await Cliente.create({
+            nombre,
+            apellido,
+            telefono,
+            correo,
+            direccion,
+            tipo
+        })
+
+        resp.status(201).json(cliente)
+
+    } catch (error) {
+        resp.status(500).json({
+            mensaje: 'Error al registrar cliente'
+        })
+    }
+})
+
+
+// Consultar clientes
+app.get('/cliente', validarSesion, validarRol('agente'), async (req, resp) => {
+    try {
+
+        const clientes = await Cliente.findAll()
+
+        resp.status(200).json(clientes)
+
+    } catch (error) {
+        resp.status(500).json({
+            mensaje: 'Error al consultar clientes'
+        })
+    }
+})
+
+// Actualizar cliente
+app.put('/cliente/:id', validarSesion, validarRol('agente'), async (req, resp) => {
+    try {
+        const id = req.params.id
+        const { nombre, apellido, telefono, correo, direccion, tipo } = req.body
+
+        const cliente = await Cliente.findByPk(id)
+
+        if (!cliente) {
+            return resp.status(404).json({
+                mensaje: 'Cliente no encontrado'
+            })
+        }
+
+        if (!nombre || !apellido || !telefono || !correo || !tipo) {
+            return resp.status(400).json({
+                mensaje: 'Complete los campos obligatorios'
+            })
+        }
+
+        const tipos = [
+            'comprador',
+            'vendedor',
+            'arrendatario',
+            'propietario'
+        ]
+
+        if (!tipos.includes(tipo)) {
+            return resp.status(400).json({
+                mensaje: 'Tipo de cliente no valido'
+            })
+        }
+
+        await Cliente.update({
+            nombre,
+            apellido,
+            telefono,
+            correo,
+            direccion,
+            tipo
+        }, {
+            where: { id: id }
+        })
+
+        resp.status(200).json({
+            mensaje: 'Cliente actualizado correctamente'
+        })
+
+    } catch (error) {
+        resp.status(500).json({
+            mensaje: 'Error al actualizar cliente'
+        })
+    }
+})
+
+// Eliminar cliente
+app.delete('/cliente/:id', validarSesion, validarRol('agente'), async (req, resp) => {
+    try {
+        const id = req.params.id
+
+        const eliminado = await Cliente.destroy({
+            where: { id: id }
+        })
+
+        if (eliminado === 0) {
+            return resp.status(404).json({
+                mensaje: 'Cliente no encontrado'
+            })
+        }
+
+        resp.status(200).json({
+            mensaje: 'Cliente eliminado correctamente'
+        })
+
+    } catch (error) {
+        if (error.name === 'SequelizeForeignKeyConstraintError') {
+            return resp.status(409).json({
+                mensaje: 'El cliente tiene registros relacionados'
+            })
+        }
+
+        resp.status(500).json({
+            mensaje: 'Error al eliminar cliente'
         })
     }
 })

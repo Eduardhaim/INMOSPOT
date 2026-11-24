@@ -9,6 +9,70 @@ const sesiones = new Map()
 
 app.use(express.json())
 
+async function validarSesion(req, resp, next) {
+    try {
+        const autorizacion = req.headers.authorization
+
+        if (!autorizacion || !autorizacion.startsWith('Bearer ')) {
+            return resp.status(401).json({
+                mensaje: 'Debe iniciar sesion'
+            })
+        }
+
+        const token = autorizacion.slice(7)
+        const sesion = sesiones.get(token)
+
+        if (!sesion || sesion.vence <= Date.now()) {
+            sesiones.delete(token)
+
+            return resp.status(401).json({
+                mensaje: 'Sesion no valida o expirada'
+            })
+        }
+
+        const usuario = await Usuario.findByPk(sesion.usuarioId, {
+            attributes: [
+                'id',
+                'nombre',
+                'apellido',
+                'correo',
+                'rol'
+            ]
+        })
+
+        if (!usuario) {
+            sesiones.delete(token)
+
+            return resp.status(401).json({
+                mensaje: 'Usuario no encontrado'
+            })
+        }
+
+        req.usuario = usuario
+        req.token = token
+
+        next()
+
+    } catch (error) {
+        resp.status(500).json({
+            mensaje: 'Error al validar sesion'
+        })
+    }
+}
+
+function validarRol(...roles) {
+    return (req, resp, next) => {
+        if (!req.usuario || !roles.includes(req.usuario.rol)) {
+            return resp.status(403).json({
+                mensaje: 'No tiene permisos para esta operacion'
+            })
+        }
+
+        next()
+    }
+}
+
+
 // Ruta principal
 app.get('/', (req, resp) => {
     resp.status(200).json({
@@ -152,6 +216,35 @@ app.post('/login', async (req, resp) => {
     }
 })
 
+// Consultar perfil del usuario
+app.get('/perfil', validarSesion, async (req, resp) => {
+    try {
+
+        resp.status(200).json(req.usuario)
+
+    } catch (error) {
+        resp.status(500).json({
+            mensaje: 'Error al consultar perfil'
+        })
+    }
+})
+// Cerrar sesion
+app.post('/logout', validarSesion, async (req, resp) => {
+    try {
+
+        sesiones.delete(req.token)
+
+        resp.status(200).json({
+            mensaje: 'Sesion cerrada correctamente'
+        })
+
+    } catch (error) {
+        resp.status(500).json({
+            mensaje: 'Error al cerrar sesion'
+        })
+    }
+})
+
 // Conexion con la base de datos
 sequelize.authenticate()
     .then(async () => {
@@ -168,3 +261,5 @@ sequelize.authenticate()
     .catch((error) => {
         console.log('Error: ' + error.message)
     })
+
+

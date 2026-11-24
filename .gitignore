@@ -155,3 +155,22 @@ vite.config.ts.timestamp-*
 .nx/cache
 .nx/workspace-data
 .nx/migrate-runs
+
+# Configuracion INMOSPOT
+
+# Dependencias
+node_modules/
+
+# Variables de entorno
+.env
+.env.*
+!.env.example
+
+# Expo
+.expo/
+dist/
+web-build/
+
+# Archivos temporales
+*.log
+.DS_Store

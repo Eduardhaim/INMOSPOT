@@ -2,8 +2,11 @@ const express = require('express')
 const sequelize = require('./db/connection')
 const Usuario = require('./Modelos/Usuario')
 const Cliente = require('./Modelos/Cliente')
+const Propiedad = require('./Modelos/Propiedad')
 const bcrypt = require('bcryptjs')
+const Fotografia = require('./Modelos/Fotografia')
 const { randomBytes } = require('node:crypto')
+
 
 const app = express()
 const sesiones = new Map()
@@ -31,7 +34,8 @@ async function validarSesion(req, resp, next) {
             })
         }
 
-        const usuario = await Usuario.findByPk(sesion.usuarioId, {
+        const usuarios = await Usuario.findAll({
+            where: { id: sesion.usuarioId },
             attributes: [
                 'id',
                 'nombre',
@@ -40,6 +44,8 @@ async function validarSesion(req, resp, next) {
                 'rol'
             ]
         })
+
+        const usuario = usuarios[0]
 
         if (!usuario) {
             sesiones.delete(token)
@@ -84,7 +90,7 @@ app.get('/', (req, resp) => {
 // Registro de usuarios
 app.post('/registro', async (req, resp) => {
     try {
-        const { nombre, apellido, correo, contrasena, rol } = req.body
+        const { nombre, apellido, correo, contrasena, rol } = req.body || {}
 
         if (![nombre, apellido, correo, contrasena].every(
             dato => typeof dato === 'string' && dato.trim()
@@ -116,11 +122,11 @@ app.post('/registro', async (req, resp) => {
 
         const correoNormalizado = correo.trim().toLowerCase()
 
-        const existe = await Usuario.findOne({
+        const existe = await Usuario.findAll({
             where: { correo: correoNormalizado }
         })
 
-        if (existe) {
+        if (existe.length > 0) {
             return resp.status(409).json({
                 mensaje: 'El correo ya esta registrado'
             })
@@ -157,7 +163,7 @@ app.post('/registro', async (req, resp) => {
 // Inicio de sesion
 app.post('/login', async (req, resp) => {
     try {
-        const { correo, contrasena } = req.body
+        const { correo, contrasena } = req.body || {}
 
         if (typeof correo !== 'string' ||
             typeof contrasena !== 'string' ||
@@ -168,11 +174,13 @@ app.post('/login', async (req, resp) => {
             })
         }
 
-        const usuario = await Usuario.findOne({
+        const usuarios = await Usuario.findAll({
             where: {
                 correo: correo.trim().toLowerCase()
             }
         })
+
+        const usuario = usuarios[0]
 
         if (!usuario) {
             return resp.status(401).json({
@@ -249,7 +257,7 @@ app.post('/logout', validarSesion, async (req, resp) => {
 // Registrar cliente
 app.post('/cliente', validarSesion, validarRol('agente'), async (req, resp) => {
     try {
-        const { nombre, apellido, telefono, correo, direccion, tipo } = req.body
+        const { nombre, apellido, telefono, correo, direccion, tipo } = req.body || {}
 
         if (!nombre || !apellido || !telefono || !correo || !tipo) {
             return resp.status(400).json({
@@ -308,11 +316,13 @@ app.get('/cliente', validarSesion, validarRol('agente'), async (req, resp) => {
 app.put('/cliente/:id', validarSesion, validarRol('agente'), async (req, resp) => {
     try {
         const id = req.params.id
-        const { nombre, apellido, telefono, correo, direccion, tipo } = req.body
+        const { nombre, apellido, telefono, correo, direccion, tipo } = req.body || {}
 
-        const cliente = await Cliente.findByPk(id)
+        const clientes = await Cliente.findAll({
+            where: { id: id }
+        })
 
-        if (!cliente) {
+        if (clientes.length == 0) {
             return resp.status(404).json({
                 mensaje: 'Cliente no encontrado'
             })
@@ -391,14 +401,531 @@ app.delete('/cliente/:id', validarSesion, validarRol('agente'), async (req, resp
     }
 })
 
+// Registrar propiedad
+app.post('/propiedad', validarSesion, validarRol('vendedor', 'propietario', 'agente'), async (req, resp) => {
+    try {
+        const {
+            titulo,
+            descripcion,
+            tipo,
+            finalidad,
+            precio,
+            ubicacion,
+            zona,
+            caracteristicas
+        } = req.body || {}
+
+        if (![titulo, descripcion, ubicacion, zona].every(
+            dato => typeof dato === 'string' && dato.trim()
+        )) {
+            return resp.status(400).json({
+                mensaje: 'Complete los campos obligatorios'
+            })
+        }
+
+        const tipos = ['casa', 'apartamento', 'terreno', 'local']
+
+        if (!tipos.includes(tipo)) {
+            return resp.status(400).json({
+                mensaje: 'Tipo de propiedad no valido'
+            })
+        }
+
+        if (!['venta', 'alquiler'].includes(finalidad)) {
+            return resp.status(400).json({
+                mensaje: 'Finalidad no valida'
+            })
+        }
+
+        if (typeof precio !== 'number' ||
+            !Number.isFinite(precio) ||
+            precio <= 0 ||
+            precio > 9999999999.99) {
+            return resp.status(400).json({
+                mensaje: 'Precio no valido'
+            })
+        }
+
+        const propiedad = await Propiedad.create({
+            titulo,
+            descripcion,
+            tipo,
+            finalidad,
+            precio,
+            ubicacion,
+            zona,
+            caracteristicas,
+            estado: 'disponible',
+            usuarioId: req.usuario.id
+        })
+
+        resp.status(201).json(propiedad)
+
+    } catch (error) {
+        resp.status(500).json({
+            mensaje: 'Error al registrar propiedad'
+        })
+    }
+})
+
+// Consultar propiedades
+app.get('/propiedad', validarSesion, async (req, resp) => {
+    try {
+        let condiciones = {}
+
+        if (req.usuario.rol === 'comprador') {
+            condiciones = {
+                estado: 'disponible',
+                finalidad: 'venta'
+            }
+        }
+
+        if (req.usuario.rol === 'arrendatario') {
+            condiciones = {
+                estado: 'disponible',
+                finalidad: 'alquiler'
+            }
+        }
+
+        if (['vendedor', 'propietario'].includes(req.usuario.rol)) {
+            condiciones = {
+                usuarioId: req.usuario.id
+            }
+        }
+
+        const propiedades = await Propiedad.findAll({
+            where: condiciones
+        })
+
+        resp.status(200).json(propiedades)
+
+    } catch (error) {
+        resp.status(500).json({
+            mensaje: 'Error al consultar propiedades'
+        })
+    }
+})
+// Actualizar propiedad
+app.put('/propiedad/:id', validarSesion, validarRol('vendedor', 'propietario', 'agente'), async (req, resp) => {
+    try {
+        const id = req.params.id
+
+        const propiedades = await Propiedad.findAll({
+            where: { id: id }
+        })
+
+        const propiedad = propiedades[0]
+
+        if (!propiedad) {
+            return resp.status(404).json({
+                mensaje: 'Propiedad no encontrada'
+            })
+        }
+
+        if (req.usuario.rol !== 'agente' &&
+            propiedad.usuarioId !== req.usuario.id) {
+            return resp.status(403).json({
+                mensaje: 'No tiene permisos para modificar esta propiedad'
+            })
+        }
+
+        const {
+            titulo,
+            descripcion,
+            tipo,
+            finalidad,
+            precio,
+            ubicacion,
+            zona,
+            caracteristicas
+        } = req.body || {}
+
+        if (![titulo, descripcion, ubicacion, zona].every(
+            dato => typeof dato === 'string' && dato.trim()
+        )) {
+            return resp.status(400).json({
+                mensaje: 'Complete los campos obligatorios'
+            })
+        }
+
+        if (!['casa', 'apartamento', 'terreno', 'local'].includes(tipo)) {
+            return resp.status(400).json({
+                mensaje: 'Tipo de propiedad no valido'
+            })
+        }
+
+        if (!['venta', 'alquiler'].includes(finalidad)) {
+            return resp.status(400).json({
+                mensaje: 'Finalidad no valida'
+            })
+        }
+
+        if (typeof precio !== 'number' ||
+            !Number.isFinite(precio) ||
+            precio <= 0 ||
+            precio > 9999999999.99) {
+            return resp.status(400).json({
+                mensaje: 'Precio no valido'
+            })
+        }
+
+        await Propiedad.update({
+            titulo,
+            descripcion,
+            tipo,
+            finalidad,
+            precio,
+            ubicacion,
+            zona,
+            caracteristicas
+        }, {
+            where: { id: id }
+        })
+
+        resp.status(200).json({
+            mensaje: 'Propiedad actualizada correctamente'
+        })
+
+    } catch (error) {
+        resp.status(500).json({
+            mensaje: 'Error al actualizar propiedad'
+        })
+    }
+})
+
+// Eliminar propiedad
+app.delete('/propiedad/:id', validarSesion, validarRol('vendedor', 'propietario', 'agente'), async (req, resp) => {
+    try {
+        const id = req.params.id
+
+        const propiedades = await Propiedad.findAll({
+            where: { id: id }
+        })
+
+        const propiedad = propiedades[0]
+
+        if (!propiedad) {
+            return resp.status(404).json({
+                mensaje: 'Propiedad no encontrada'
+            })
+        }
+
+        if (req.usuario.rol !== 'agente' &&
+            propiedad.usuarioId !== req.usuario.id) {
+            return resp.status(403).json({
+                mensaje: 'No tiene permisos para eliminar esta propiedad'
+            })
+        }
+
+        if (propiedad.estado !== 'disponible') {
+            return resp.status(409).json({
+                mensaje: 'La propiedad no esta disponible para eliminar'
+            })
+        }
+
+        const eliminado = await Propiedad.destroy({
+            where: { id: id }
+        })
+
+        if (eliminado == 0) {
+            return resp.status(404).json({
+                mensaje: 'Propiedad no encontrada'
+            })
+        }
+
+        resp.status(200).json({
+            mensaje: 'Propiedad eliminada correctamente'
+        })
+
+    } catch (error) {
+        if (error.name === 'SequelizeForeignKeyConstraintError') {
+            return resp.status(409).json({
+                mensaje: 'La propiedad tiene registros relacionados'
+            })
+        }
+
+        resp.status(500).json({
+            mensaje: 'Error al eliminar propiedad'
+        })
+    }
+})
+
+// Consultar detalle de propiedad
+app.get('/propiedad/:id', validarSesion, async (req, resp) => {
+    try {
+
+        let condiciones = {
+            id: req.params.id
+        }
+
+        if (req.usuario.rol === 'comprador') {
+            condiciones.estado = 'disponible'
+            condiciones.finalidad = 'venta'
+        }
+
+        if (req.usuario.rol === 'arrendatario') {
+            condiciones.estado = 'disponible'
+            condiciones.finalidad = 'alquiler'
+        }
+
+        if (req.usuario.rol === 'vendedor' ||
+            req.usuario.rol === 'propietario') {
+            condiciones.usuarioId = req.usuario.id
+        }
+
+        const propiedad = await Propiedad.findAll({
+            where: condiciones
+        })
+
+        if (propiedad.length > 0) {
+            resp.status(200).json(propiedad[0])
+        }
+        else {
+            resp.status(404).json({
+                mensaje: 'Propiedad no encontrada'
+            })
+        }
+
+    } catch (error) {
+        resp.status(500).json({
+            mensaje: 'Error al consultar propiedad'
+        })
+    }
+})
+
+// Actualizar estado de propiedad
+app.put('/propiedad/:id/estado', validarSesion, validarRol('agente'), async (req, resp) => {
+    try {
+        const id = req.params.id
+        const { estado } = req.body || {}
+
+        const propiedad = await Propiedad.findAll({
+            where: { id: id }
+        })
+
+        if (propiedad.length == 0) {
+            return resp.status(404).json({
+                mensaje: 'Propiedad no encontrada'
+            })
+        }
+
+        if (estado != 'disponible' && estado != 'reservada') {
+            return resp.status(400).json({
+                mensaje: 'Estado no valido'
+            })
+        }
+
+        if (propiedad[0].estado == 'vendida' ||
+            propiedad[0].estado == 'alquilada') {
+            return resp.status(409).json({
+                mensaje: 'La propiedad tiene una operacion finalizada'
+            })
+        }
+
+        await Propiedad.update({
+            estado: estado
+        }, {
+            where: { id: id }
+        })
+
+        resp.status(200).json({
+            mensaje: 'Estado actualizado correctamente'
+        })
+
+    } catch (error) {
+        resp.status(500).json({
+            mensaje: 'Error al actualizar estado'
+        })
+    }
+})
+
+// Buscar propiedades por tipo y zona
+app.get('/propiedad/buscar/:tipo/:zona', validarSesion, async (req, resp) => {
+    try {
+
+        let condiciones = {}
+
+        if (req.usuario.rol === 'comprador') {
+            condiciones.estado = 'disponible'
+            condiciones.finalidad = 'venta'
+        }
+
+        if (req.usuario.rol === 'arrendatario') {
+            condiciones.estado = 'disponible'
+            condiciones.finalidad = 'alquiler'
+        }
+
+        if (req.usuario.rol === 'vendedor' ||
+            req.usuario.rol === 'propietario') {
+            condiciones.usuarioId = req.usuario.id
+        }
+
+        if (req.params.tipo !== 'todos') {
+            condiciones.tipo = req.params.tipo
+        }
+
+        if (req.params.zona !== 'todas') {
+            condiciones.zona = req.params.zona
+        }
+
+        const propiedades = await Propiedad.findAll({
+            where: condiciones
+        })
+
+        resp.status(200).json(propiedades)
+
+    } catch (error) {
+        resp.status(500).json({
+            mensaje: 'Error al buscar propiedades'
+        })
+    }
+})
+
+// Registrar fotografia
+app.post('/fotografia', validarSesion, validarRol('vendedor', 'propietario', 'agente'), async (req, resp) => {
+    try {
+
+        const { url, propiedadId } = req.body
+
+        if (typeof url !== 'string' || !url.trim() ||
+            url.length > 255 || !propiedadId) {
+            return resp.status(400).json({
+                mensaje: 'Complete los campos correctamente'
+            })
+        }
+
+        const propiedad = await Propiedad.findAll({
+            where: { id: propiedadId }
+        })
+
+        if (propiedad.length == 0) {
+            return resp.status(404).json({
+                mensaje: 'Propiedad no encontrada'
+            })
+        }
+
+        if (req.usuario.rol !== 'agente' &&
+            propiedad[0].usuarioId !== req.usuario.id) {
+            return resp.status(403).json({
+                mensaje: 'No tiene permisos'
+            })
+        }
+
+        const fotografia = await Fotografia.create({
+            url,
+            propiedadId
+        })
+
+        resp.status(201).json(fotografia)
+
+    } catch (error) {
+        resp.status(500).json({
+            mensaje: 'Error al registrar fotografia'
+        })
+    }
+})
+
+// Consultar fotografias de una propiedad
+app.get('/fotografia/:propiedadId', validarSesion, async (req, resp) => {
+    try {
+
+        let condiciones = {
+            id: req.params.propiedadId
+        }
+
+        if (req.usuario.rol === 'comprador') {
+            condiciones.estado = 'disponible'
+            condiciones.finalidad = 'venta'
+        }
+
+        if (req.usuario.rol === 'arrendatario') {
+            condiciones.estado = 'disponible'
+            condiciones.finalidad = 'alquiler'
+        }
+
+        if (req.usuario.rol === 'vendedor' ||
+            req.usuario.rol === 'propietario') {
+            condiciones.usuarioId = req.usuario.id
+        }
+
+        const propiedad = await Propiedad.findAll({
+            where: condiciones
+        })
+
+        if (propiedad.length == 0) {
+            return resp.status(404).json({
+                mensaje: 'Propiedad no encontrada'
+            })
+        }
+
+        const fotografias = await Fotografia.findAll({
+            where: {
+                propiedadId: req.params.propiedadId
+            }
+        })
+
+        resp.status(200).json(fotografias)
+
+    } catch (error) {
+        resp.status(500).json({
+            mensaje: 'Error al consultar fotografias'
+        })
+    }
+})
+
+
+// Eliminar fotografia
+app.delete('/fotografia/:id', validarSesion, validarRol('vendedor', 'propietario', 'agente'), async (req, resp) => {
+    try {
+
+        const fotografia = await Fotografia.findAll({
+            where: { id: req.params.id }
+        })
+
+        if (fotografia.length == 0) {
+            return resp.status(404).json({
+                mensaje: 'Fotografia no encontrada'
+            })
+        }
+
+        const propiedad = await Propiedad.findAll({
+            where: {
+                id: fotografia[0].propiedadId
+            }
+        })
+
+        if (propiedad.length == 0) {
+            return resp.status(404).json({
+                mensaje: 'Propiedad no encontrada'
+            })
+        }
+
+        if (req.usuario.rol !== 'agente' &&
+            propiedad[0].usuarioId !== req.usuario.id) {
+            return resp.status(403).json({
+                mensaje: 'No tiene permisos'
+            })
+        }
+
+        await Fotografia.destroy({
+            where: { id: req.params.id }
+        })
+
+        resp.status(200).json({
+            mensaje: 'Fotografia eliminada correctamente'
+        })
+
+    } catch (error) {
+        resp.status(500).json({
+            mensaje: 'Error al eliminar fotografia'
+        })
+    }
+})
+
 // Conexion con la base de datos
 sequelize.authenticate()
-    .then(async () => {
+    .then(() => {
         console.log('Conexion con BD establecida')
-
-        await sequelize.sync()
-
-        console.log('Tablas sincronizadas correctamente')
 
         app.listen(Number(process.env.PORT), () => {
             console.log('INMOSPOT ejecutando en el puerto 5000')
@@ -407,5 +934,3 @@ sequelize.authenticate()
     .catch((error) => {
         console.log('Error: ' + error.message)
     })
-
-

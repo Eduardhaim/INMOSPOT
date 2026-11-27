@@ -3,6 +3,7 @@ const sequelize = require('./db/connection')
 const Usuario = require('./Modelos/Usuario')
 const Cliente = require('./Modelos/Cliente')
 const Propiedad = require('./Modelos/Propiedad')
+const Favorito = require('./Modelos/Favorito')
 const bcrypt = require('bcryptjs')
 const Fotografia = require('./Modelos/Fotografia')
 const { randomBytes } = require('node:crypto')
@@ -1185,8 +1186,6 @@ app.get('/fotografia/:propiedadId', validarSesion, async (req, resp) => {
 })
 
 
-
-
 // Eliminar fotografia
 app.delete('/fotografia/:id', validarSesion, validarRol('vendedor', 'propietario', 'agente'), async (req, resp) => {
     try {
@@ -1243,7 +1242,126 @@ app.delete('/fotografia/:id', validarSesion, validarRol('vendedor', 'propietario
     }
 })
 
+// Registrar favorito
+app.post('/favorito', validarSesion, validarRol('comprador'), async (req, resp) => {
+    try {
+        const { propiedadId } = req.body || {}
 
+        if (!Number.isInteger(propiedadId) || propiedadId <= 0) {
+            return resp.status(400).json({
+                mensaje: 'Debe proporcionar una propiedad valida'
+            })
+        }
+
+        const propiedad = await Propiedad.findOne({
+            where: {
+                id: propiedadId,
+                estado: 'disponible',
+                finalidad: 'venta'
+            }
+        })
+
+        if (!propiedad) {
+            return resp.status(404).json({
+                mensaje: 'Propiedad no disponible'
+            })
+        }
+
+        const favoritoExistente = await Favorito.findOne({
+            where: {
+                usuarioId: req.usuario.id,
+                propiedadId: propiedadId
+            }
+        })
+
+        if (favoritoExistente) {
+            return resp.status(409).json({
+                mensaje: 'La propiedad ya esta en favoritos'
+            })
+        }
+
+        const favorito = await Favorito.create({
+            usuarioId: req.usuario.id,
+            propiedadId: propiedadId
+        })
+
+        resp.status(201).json(favorito)
+
+    } catch (error) {
+        if (error.name === 'SequelizeUniqueConstraintError') {
+            return resp.status(409).json({
+                mensaje: 'La propiedad ya esta en favoritos'
+            })
+        }
+
+        resp.status(500).json({
+            mensaje: 'Error al registrar favorito'
+        })
+    }
+})
+
+// Consultar mis favoritos
+app.get('/favorito', validarSesion, validarRol('comprador'), async (req, resp) => {
+    try {
+        const favoritos = await Favorito.findAll({
+            where: {
+                usuarioId: req.usuario.id
+            }
+        })
+
+        const resultado = []
+
+        for (const favorito of favoritos) {
+            const propiedad = await Propiedad.findOne({
+                where: {
+                    id: favorito.propiedadId,
+                    estado: 'disponible',
+                    finalidad: 'venta'
+                }
+            })
+
+            resultado.push({
+                id: favorito.id,
+                propiedadId: favorito.propiedadId,
+                propiedad: propiedad
+            })
+        }
+
+        resp.status(200).json(resultado)
+
+    } catch (error) {
+        resp.status(500).json({
+            mensaje: 'Error al consultar favoritos'
+        })
+    }
+})
+
+// Eliminar favorito
+app.delete('/favorito/:id', validarSesion, validarRol('comprador'), async (req, resp) => {
+    try {
+        const eliminado = await Favorito.destroy({
+            where: {
+                id: req.params.id,
+                usuarioId: req.usuario.id
+            }
+        })
+
+        if (eliminado === 0) {
+            return resp.status(404).json({
+                mensaje: 'Favorito no encontrado'
+            })
+        }
+
+        resp.status(200).json({
+            mensaje: 'Favorito eliminado correctamente'
+        })
+
+    } catch (error) {
+        resp.status(500).json({
+            mensaje: 'Error al eliminar favorito'
+        })
+    }
+})
 // Conexion con la base de datos
 sequelize.authenticate()
     .then(async () => {

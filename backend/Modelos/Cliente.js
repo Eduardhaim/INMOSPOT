@@ -44,7 +44,9 @@ const Cliente = sequelize.define('Cliente', {
         references: {
             model: 'usuarios',
             key: 'id'
-        }
+        },
+        onDelete: 'NO ACTION',
+        onUpdate: 'NO ACTION'
     }
 }, {
     tableName: 'clientes',

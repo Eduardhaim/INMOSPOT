@@ -257,7 +257,15 @@ app.post('/logout', validarSesion, async (req, resp) => {
 // Registrar cliente
 app.post('/cliente', validarSesion, validarRol('agente'), async (req, resp) => {
     try {
-        const { nombre, apellido, telefono, correo, direccion, tipo } = req.body || {}
+        const {
+            nombre,
+            apellido,
+            telefono,
+            correo,
+            direccion,
+            tipo,
+            usuarioId
+        } = req.body || {}
 
         if (!nombre || !apellido || !telefono || !correo || !tipo) {
             return resp.status(400).json({
@@ -278,18 +286,58 @@ app.post('/cliente', validarSesion, validarRol('agente'), async (req, resp) => {
             })
         }
 
+        if (usuarioId !== undefined && usuarioId !== null) {
+
+            if (!Number.isInteger(usuarioId) || usuarioId <= 0) {
+                return resp.status(400).json({
+                    mensaje: 'Usuario no valido'
+                })
+            }
+
+            const usuario = await Usuario.findByPk(usuarioId)
+
+            if (!usuario) {
+                return resp.status(404).json({
+                    mensaje: 'Usuario no encontrado'
+                })
+            }
+
+            if (usuario.rol !== tipo) {
+                return resp.status(400).json({
+                    mensaje: 'El rol del usuario no coincide con el tipo de cliente'
+                })
+            }
+
+            const clienteExistente = await Cliente.findOne({
+                where: { usuarioId: usuarioId }
+            })
+
+            if (clienteExistente) {
+                return resp.status(409).json({
+                    mensaje: 'El usuario ya tiene un cliente asociado'
+                })
+            }
+        }
+
         const cliente = await Cliente.create({
             nombre,
             apellido,
             telefono,
             correo,
             direccion,
-            tipo
+            tipo,
+            usuarioId
         })
 
         resp.status(201).json(cliente)
 
     } catch (error) {
+        if (error.name === 'SequelizeUniqueConstraintError') {
+            return resp.status(409).json({
+                mensaje: 'El usuario ya tiene un cliente asociado'
+            })
+        }
+
         resp.status(500).json({
             mensaje: 'Error al registrar cliente'
         })
@@ -312,11 +360,21 @@ app.get('/cliente', validarSesion, validarRol('agente'), async (req, resp) => {
     }
 })
 
+
 // Actualizar cliente
 app.put('/cliente/:id', validarSesion, validarRol('agente'), async (req, resp) => {
     try {
         const id = req.params.id
-        const { nombre, apellido, telefono, correo, direccion, tipo } = req.body || {}
+
+        const {
+            nombre,
+            apellido,
+            telefono,
+            correo,
+            direccion,
+            tipo,
+            usuarioId
+        } = req.body || {}
 
         const clientes = await Cliente.findAll({
             where: { id: id }
@@ -327,6 +385,8 @@ app.put('/cliente/:id', validarSesion, validarRol('agente'), async (req, resp) =
                 mensaje: 'Cliente no encontrado'
             })
         }
+
+        const cliente = clientes[0]
 
         if (!nombre || !apellido || !telefono || !correo || !tipo) {
             return resp.status(400).json({
@@ -347,13 +407,63 @@ app.put('/cliente/:id', validarSesion, validarRol('agente'), async (req, resp) =
             })
         }
 
+        let usuarioAsociado = cliente.usuarioId
+
+        if (usuarioId !== undefined) {
+
+            if (cliente.usuarioId !== null &&
+                usuarioId !== cliente.usuarioId) {
+                return resp.status(409).json({
+                    mensaje: 'No puede cambiar la cuenta asociada al cliente'
+                })
+            }
+
+            usuarioAsociado = usuarioId
+        }
+
+        if (usuarioAsociado !== null) {
+
+            if (!Number.isInteger(usuarioAsociado) ||
+                usuarioAsociado <= 0) {
+                return resp.status(400).json({
+                    mensaje: 'Usuario no valido'
+                })
+            }
+
+            const usuario = await Usuario.findByPk(usuarioAsociado)
+
+            if (!usuario) {
+                return resp.status(404).json({
+                    mensaje: 'Usuario no encontrado'
+                })
+            }
+
+            if (usuario.rol !== tipo) {
+                return resp.status(400).json({
+                    mensaje: 'El rol del usuario no coincide con el tipo de cliente'
+                })
+            }
+
+            const clienteExistente = await Cliente.findOne({
+                where: { usuarioId: usuarioAsociado }
+            })
+
+            if (clienteExistente &&
+                clienteExistente.id !== cliente.id) {
+                return resp.status(409).json({
+                    mensaje: 'El usuario ya tiene un cliente asociado'
+                })
+            }
+        }
+
         await Cliente.update({
             nombre,
             apellido,
             telefono,
             correo,
             direccion,
-            tipo
+            tipo,
+            usuarioId: usuarioAsociado
         }, {
             where: { id: id }
         })
@@ -363,8 +473,56 @@ app.put('/cliente/:id', validarSesion, validarRol('agente'), async (req, resp) =
         })
 
     } catch (error) {
+        if (error.name === 'SequelizeUniqueConstraintError') {
+            return resp.status(409).json({
+                mensaje: 'El usuario ya tiene un cliente asociado'
+            })
+        }
+
         resp.status(500).json({
             mensaje: 'Error al actualizar cliente'
+        })
+    }
+})
+
+// Consultar bienes inmuebles de un cliente
+app.get('/cliente/:id/propiedades', validarSesion, validarRol('agente', 'vendedor', 'propietario'), async (req, resp) => {
+    try {
+
+        const id = req.params.id
+
+        const cliente = await Cliente.findByPk(id)
+
+        if (!cliente) {
+            return resp.status(404).json({
+                mensaje: 'Cliente no encontrado'
+            })
+        }
+
+        if (req.usuario.rol !== 'agente' &&
+            cliente.usuarioId !== req.usuario.id) {
+            return resp.status(403).json({
+                mensaje: 'No tiene permisos'
+            })
+        }
+
+        const propiedades = await Propiedad.findAll({
+            where: {
+                clienteId: id
+            }
+        })
+
+        resp.status(200).json({
+            clienteId: cliente.id,
+            nombre: cliente.nombre,
+            apellido: cliente.apellido,
+            totalBienes: propiedades.length,
+            propiedades: propiedades
+        })
+
+    } catch (error) {
+        resp.status(500).json({
+            mensaje: 'Error al consultar bienes del cliente'
         })
     }
 })
@@ -412,7 +570,8 @@ app.post('/propiedad', validarSesion, validarRol('vendedor', 'propietario', 'age
             precio,
             ubicacion,
             zona,
-            caracteristicas
+            caracteristicas,
+            clienteId
         } = req.body || {}
 
         if (![titulo, descripcion, ubicacion, zona].every(
@@ -446,6 +605,45 @@ app.post('/propiedad', validarSesion, validarRol('vendedor', 'propietario', 'age
             })
         }
 
+        let cliente
+
+        if (req.usuario.rol === 'agente') {
+
+            if (!Number.isInteger(clienteId) || clienteId <= 0) {
+                return resp.status(400).json({
+                    mensaje: 'Debe seleccionar un cliente'
+                })
+            }
+
+            cliente = await Cliente.findByPk(clienteId)
+
+            if (!cliente) {
+                return resp.status(404).json({
+                    mensaje: 'Cliente no encontrado'
+                })
+            }
+
+        } else {
+
+            cliente = await Cliente.findOne({
+                where: {
+                    usuarioId: req.usuario.id
+                }
+            })
+
+            if (!cliente) {
+                return resp.status(400).json({
+                    mensaje: 'El usuario no tiene un cliente asociado'
+                })
+            }
+
+            if (clienteId !== undefined && clienteId !== cliente.id) {
+                return resp.status(403).json({
+                    mensaje: 'No puede registrar propiedades de otro cliente'
+                })
+            }
+        }
+
         const propiedad = await Propiedad.create({
             titulo,
             descripcion,
@@ -456,7 +654,8 @@ app.post('/propiedad', validarSesion, validarRol('vendedor', 'propietario', 'age
             zona,
             caracteristicas,
             estado: 'disponible',
-            usuarioId: req.usuario.id
+            usuarioId: req.usuario.id,
+            clienteId: cliente.id
         })
 
         resp.status(201).json(propiedad)
@@ -488,8 +687,19 @@ app.get('/propiedad', validarSesion, async (req, resp) => {
         }
 
         if (['vendedor', 'propietario'].includes(req.usuario.rol)) {
+
+            const cliente = await Cliente.findOne({
+                where: {
+                    usuarioId: req.usuario.id
+                }
+            })
+
+            if (!cliente) {
+                return resp.status(200).json([])
+            }
+
             condiciones = {
-                usuarioId: req.usuario.id
+                clienteId: cliente.id
             }
         }
 
@@ -505,6 +715,7 @@ app.get('/propiedad', validarSesion, async (req, resp) => {
         })
     }
 })
+
 // Actualizar propiedad
 app.put('/propiedad/:id', validarSesion, validarRol('vendedor', 'propietario', 'agente'), async (req, resp) => {
     try {
@@ -522,13 +733,6 @@ app.put('/propiedad/:id', validarSesion, validarRol('vendedor', 'propietario', '
             })
         }
 
-        if (req.usuario.rol !== 'agente' &&
-            propiedad.usuarioId !== req.usuario.id) {
-            return resp.status(403).json({
-                mensaje: 'No tiene permisos para modificar esta propiedad'
-            })
-        }
-
         const {
             titulo,
             descripcion,
@@ -537,7 +741,8 @@ app.put('/propiedad/:id', validarSesion, validarRol('vendedor', 'propietario', '
             precio,
             ubicacion,
             zona,
-            caracteristicas
+            caracteristicas,
+            clienteId
         } = req.body || {}
 
         if (![titulo, descripcion, ubicacion, zona].every(
@@ -569,6 +774,52 @@ app.put('/propiedad/:id', validarSesion, validarRol('vendedor', 'propietario', '
             })
         }
 
+        let clientePropietarioId = propiedad.clienteId
+
+        if (req.usuario.rol === 'agente') {
+
+            if (clienteId !== undefined) {
+                clientePropietarioId = clienteId
+            }
+
+            if (!Number.isInteger(clientePropietarioId) ||
+                clientePropietarioId <= 0) {
+                return resp.status(400).json({
+                    mensaje: 'Debe seleccionar un cliente'
+                })
+            }
+
+            const cliente = await Cliente.findByPk(clientePropietarioId)
+
+            if (!cliente) {
+                return resp.status(404).json({
+                    mensaje: 'Cliente no encontrado'
+                })
+            }
+
+        } else {
+
+            const cliente = await Cliente.findOne({
+                where: {
+                    usuarioId: req.usuario.id
+                }
+            })
+
+            if (!cliente || propiedad.clienteId !== cliente.id) {
+                return resp.status(403).json({
+                    mensaje: 'No tiene permisos para modificar esta propiedad'
+                })
+            }
+
+            if (clienteId !== undefined && clienteId !== cliente.id) {
+                return resp.status(403).json({
+                    mensaje: 'No puede cambiar el propietario del inmueble'
+                })
+            }
+
+            clientePropietarioId = cliente.id
+        }
+
         await Propiedad.update({
             titulo,
             descripcion,
@@ -577,7 +828,8 @@ app.put('/propiedad/:id', validarSesion, validarRol('vendedor', 'propietario', '
             precio,
             ubicacion,
             zona,
-            caracteristicas
+            caracteristicas,
+            clienteId: clientePropietarioId
         }, {
             where: { id: id }
         })
@@ -592,6 +844,8 @@ app.put('/propiedad/:id', validarSesion, validarRol('vendedor', 'propietario', '
         })
     }
 })
+
+
 
 // Eliminar propiedad
 app.delete('/propiedad/:id', validarSesion, validarRol('vendedor', 'propietario', 'agente'), async (req, resp) => {
@@ -610,11 +864,19 @@ app.delete('/propiedad/:id', validarSesion, validarRol('vendedor', 'propietario'
             })
         }
 
-        if (req.usuario.rol !== 'agente' &&
-            propiedad.usuarioId !== req.usuario.id) {
-            return resp.status(403).json({
-                mensaje: 'No tiene permisos para eliminar esta propiedad'
+        if (req.usuario.rol !== 'agente') {
+
+            const cliente = await Cliente.findOne({
+                where: {
+                    usuarioId: req.usuario.id
+                }
             })
+
+            if (!cliente || propiedad.clienteId !== cliente.id) {
+                return resp.status(403).json({
+                    mensaje: 'No tiene permisos para eliminar esta propiedad'
+                })
+            }
         }
 
         if (propiedad.estado !== 'disponible') {
@@ -650,6 +912,7 @@ app.delete('/propiedad/:id', validarSesion, validarRol('vendedor', 'propietario'
     }
 })
 
+
 // Consultar detalle de propiedad
 app.get('/propiedad/:id', validarSesion, async (req, resp) => {
     try {
@@ -670,7 +933,20 @@ app.get('/propiedad/:id', validarSesion, async (req, resp) => {
 
         if (req.usuario.rol === 'vendedor' ||
             req.usuario.rol === 'propietario') {
-            condiciones.usuarioId = req.usuario.id
+
+            const cliente = await Cliente.findOne({
+                where: {
+                    usuarioId: req.usuario.id
+                }
+            })
+
+            if (!cliente) {
+                return resp.status(404).json({
+                    mensaje: 'Propiedad no encontrada'
+                })
+            }
+
+            condiciones.clienteId = cliente.id
         }
 
         const propiedad = await Propiedad.findAll({
@@ -739,6 +1015,7 @@ app.put('/propiedad/:id/estado', validarSesion, validarRol('agente'), async (req
     }
 })
 
+
 // Buscar propiedades por tipo y zona
 app.get('/propiedad/buscar/:tipo/:zona', validarSesion, async (req, resp) => {
     try {
@@ -757,7 +1034,18 @@ app.get('/propiedad/buscar/:tipo/:zona', validarSesion, async (req, resp) => {
 
         if (req.usuario.rol === 'vendedor' ||
             req.usuario.rol === 'propietario') {
-            condiciones.usuarioId = req.usuario.id
+
+            const cliente = await Cliente.findOne({
+                where: {
+                    usuarioId: req.usuario.id
+                }
+            })
+
+            if (!cliente) {
+                return resp.status(200).json([])
+            }
+
+            condiciones.clienteId = cliente.id
         }
 
         if (req.params.tipo !== 'todos') {
@@ -781,11 +1069,12 @@ app.get('/propiedad/buscar/:tipo/:zona', validarSesion, async (req, resp) => {
     }
 })
 
+
 // Registrar fotografia
 app.post('/fotografia', validarSesion, validarRol('vendedor', 'propietario', 'agente'), async (req, resp) => {
     try {
 
-        const { url, propiedadId } = req.body
+        const { url, propiedadId } = req.body || {}
 
         if (typeof url !== 'string' || !url.trim() ||
             url.length > 255 || !propiedadId) {
@@ -804,11 +1093,19 @@ app.post('/fotografia', validarSesion, validarRol('vendedor', 'propietario', 'ag
             })
         }
 
-        if (req.usuario.rol !== 'agente' &&
-            propiedad[0].usuarioId !== req.usuario.id) {
-            return resp.status(403).json({
-                mensaje: 'No tiene permisos'
+        if (req.usuario.rol !== 'agente') {
+
+            const cliente = await Cliente.findOne({
+                where: {
+                    usuarioId: req.usuario.id
+                }
             })
+
+            if (!cliente || propiedad[0].clienteId !== cliente.id) {
+                return resp.status(403).json({
+                    mensaje: 'No tiene permisos'
+                })
+            }
         }
 
         const fotografia = await Fotografia.create({
@@ -824,6 +1121,7 @@ app.post('/fotografia', validarSesion, validarRol('vendedor', 'propietario', 'ag
         })
     }
 })
+
 
 // Consultar fotografias de una propiedad
 app.get('/fotografia/:propiedadId', validarSesion, async (req, resp) => {
@@ -845,7 +1143,20 @@ app.get('/fotografia/:propiedadId', validarSesion, async (req, resp) => {
 
         if (req.usuario.rol === 'vendedor' ||
             req.usuario.rol === 'propietario') {
-            condiciones.usuarioId = req.usuario.id
+
+            const cliente = await Cliente.findOne({
+                where: {
+                    usuarioId: req.usuario.id
+                }
+            })
+
+            if (!cliente) {
+                return resp.status(404).json({
+                    mensaje: 'Propiedad no encontrada'
+                })
+            }
+
+            condiciones.clienteId = cliente.id
         }
 
         const propiedad = await Propiedad.findAll({
@@ -874,6 +1185,8 @@ app.get('/fotografia/:propiedadId', validarSesion, async (req, resp) => {
 })
 
 
+
+
 // Eliminar fotografia
 app.delete('/fotografia/:id', validarSesion, validarRol('vendedor', 'propietario', 'agente'), async (req, resp) => {
     try {
@@ -900,11 +1213,19 @@ app.delete('/fotografia/:id', validarSesion, validarRol('vendedor', 'propietario
             })
         }
 
-        if (req.usuario.rol !== 'agente' &&
-            propiedad[0].usuarioId !== req.usuario.id) {
-            return resp.status(403).json({
-                mensaje: 'No tiene permisos'
+        if (req.usuario.rol !== 'agente') {
+
+            const cliente = await Cliente.findOne({
+                where: {
+                    usuarioId: req.usuario.id
+                }
             })
+
+            if (!cliente || propiedad[0].clienteId !== cliente.id) {
+                return resp.status(403).json({
+                    mensaje: 'No tiene permisos'
+                })
+            }
         }
 
         await Fotografia.destroy({
@@ -922,10 +1243,15 @@ app.delete('/fotografia/:id', validarSesion, validarRol('vendedor', 'propietario
     }
 })
 
+
 // Conexion con la base de datos
 sequelize.authenticate()
-    .then(() => {
+    .then(async () => {
         console.log('Conexion con BD establecida')
+
+        await sequelize.sync()
+
+        console.log('Tablas sincronizadas correctamente')
 
         app.listen(Number(process.env.PORT), () => {
             console.log('INMOSPOT ejecutando en el puerto 5000')

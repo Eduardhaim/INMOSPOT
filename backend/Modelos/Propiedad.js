@@ -1,3 +1,4 @@
+
 const { DataTypes } = require('sequelize')
 const sequelize = require('../db/connection')
 
@@ -64,7 +65,18 @@ const Propiedad = sequelize.define('Propiedad', {
             model: 'usuarios',
             key: 'id'
         },
-        onDelete: 'RESTRICT'
+        onDelete: 'RESTRICT',
+        onUpdate: 'NO ACTION'
+    },
+    clienteId: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+        references: {
+            model: 'clientes',
+            key: 'id'
+        },
+        onDelete: 'NO ACTION',
+        onUpdate: 'NO ACTION'
     }
 }, {
     tableName: 'propiedades',

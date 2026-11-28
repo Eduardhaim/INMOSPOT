@@ -174,3 +174,9 @@ web-build/
 # Archivos temporales
 *.log
 .DS_Store
+
+# Fotografias almacenadas localmente
+backend/uploads/
+
+# Respaldos de MySQL Workbench
+*.mwb.bak
